@@ -37,6 +37,7 @@ style: |
 
 ## 목차
 
+**기본 사용법 (섹션 1-7)**
 1. 문제 제기: 단일 검색의 실패 사례
 2. 키워드 검색(BM25) 원리
 3. 벡터 검색(Dense Retrieval) 원리
@@ -44,11 +45,14 @@ style: |
 5. Hybrid Search 아키텍처
 6. Reciprocal Rank Fusion(RRF)
 7. 성능 비교 실험
-8. Elasticsearch 8.x 구현
-9. LangChain EnsembleRetriever
-10. Langfuse 검색 품질 추적
-11. 실전 주의사항
-12. Exercise
+
+**실전 심화 (섹션 8-14)**
+8. PDF 실전 데이터 Recall@K 실험
+9. RRF 가중치 Grid Search 최적화
+10. 청크 크기 영향 분석
+11. 실패 분석 (Error Analysis)
+12. Langfuse 통합
+13. Exercise
 
 ---
 
@@ -420,245 +424,368 @@ Recall@10 by Query Type
 
 ---
 
-## 8. Elasticsearch 8.x Hybrid Query
+## 8. 실전 PDF 데이터로 Recall@K 실험
 
-```python
-# Elasticsearch 8.x hybrid (kNN + BM25) 쿼리
-query_body = {
-    "query": {
-        "bool": {
-            "should": [
-                {
-                    "match": {
-                        "content": {
-                            "query": user_query,
-                            "boost": 1.0
-                        }
-                    }
-                }
-            ]
-        }
-    },
-    "knn": {
-        "field": "content_vector",
-        "query_vector": query_embedding,
-        "k": 10,
-        "num_candidates": 100,
-        "boost": 1.0
-    },
-    "rank": {
-        "rrf": {
-            "window_size": 50,
-            "rank_constant": 60
-        }
-    }
-}
+### 실험 데이터셋
+
+| 파일 | 내용 | 언어 | 도메인 |
+|------|------|------|--------|
+| `20240531_company_652771000.pdf` | 삼성전기(009150) 증권사 리포트 | 한국어 | 금융 |
+| `labor_law.pdf` | 근로기준법 전문 | 한국어 | 법률 |
+| `transformer.pdf` | Attention Is All You Need | 영어 | AI |
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant PDF as PDF 문서 (3개)
+    participant Split as RecursiveCharacterTextSplitter
+    participant BM25 as BM25 인덱스
+    participant Vec as ChromaDB (BAAI/bge-m3)
+    participant Hybrid as RRF Hybrid
+    participant Eval as Recall@K 평가
+
+    PDF->>Split: PyMuPDF 텍스트 추출
+    Split->>Split: chunk_size=500, overlap=100
+    Split->>BM25: 청크 인덱싱
+    Split->>Vec: 임베딩 + 인덱싱
+    BM25->>Hybrid: BM25 순위
+    Vec->>Hybrid: Vector 순위
+    Hybrid->>Eval: RRF 통합 순위
+    Eval->>Eval: Ground Truth vs Top-K 비교
 ```
 
 ---
 
-## 8. Elasticsearch RRF 내장 기능
+## 8. 이종 문서(Heterogeneous) 검색의 난점
 
-```python
-from elasticsearch import Elasticsearch
+<div class="danger">
 
-es = Elasticsearch("http://localhost:9200")
-
-results = es.search(
-    index="documents",
-    body={
-        "query": {"match": {"content": query}},
-        "knn": {
-            "field": "embedding",
-            "query_vector": embed(query),
-            "k": 10,
-            "num_candidates": 100
-        },
-        "rank": {"rrf": {"rank_constant": 60}},
-        "size": 10
-    }
-)
-```
-
-<div class="highlight">
-
-Elasticsearch 8.9+ 부터 `rank.rrf` 내장 지원 — 별도 구현 불필요
+**문제 1: 다국어 혼합** — 한국어 금융/법률 + 영어 논문이 같은 인덱스에 공존
+**문제 2: 도메인 차이** — 금융 용어, 법률 용어, AI 용어의 임베딩 공간 분리
+**문제 3: 청크 품질** — PDF 레이아웃에 따라 의미 단위 분할이 불완전
 
 </div>
 
----
+### 평가 쿼리 설계 (12개)
 
-## 9. LangChain EnsembleRetriever로 RRF 구현
-
-```python
-from langchain.retrievers import BM25Retriever, EnsembleRetriever
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
-
-# 1. BM25 Retriever
-bm25_retriever = BM25Retriever.from_documents(docs)
-bm25_retriever.k = 10
-
-# 2. 벡터 Retriever
-embeddings = HuggingFaceEmbeddings(
-    model_name="jhgan/ko-sroberta-multitask"
-)
-vectorstore = Chroma.from_documents(docs, embeddings)
-vector_retriever = vectorstore.as_retriever(
-    search_kwargs={"k": 10}
-)
-
-# 3. Ensemble (RRF)
-ensemble = EnsembleRetriever(
-    retrievers=[bm25_retriever, vector_retriever],
-    weights=[0.5, 0.5]  # 동일 가중치
-)
-
-results = ensemble.invoke("검색 쿼리")
-```
+| 도메인 | 쿼리 유형 | 예시 |
+|--------|----------|------|
+| 금융 (4개) | keyword | "삼성전기 목표주가와 투자의견" |
+| | semantic | "컴포넌트사업부 실적 개선 원인" |
+| 법률 (4개) | keyword | "근로시간은 1주에 몇 시간?" |
+| | semantic | "해고 예고 기간과 예외 사유" |
+| AI (4개) | keyword | "scaled dot-product attention formula" |
+| | semantic | "왜 recurrence를 self-attention으로 대체?" |
 
 ---
 
-## 10. Langfuse로 검색 품질 추적
-
-```python
-from langfuse import Langfuse
-from langfuse.callback import CallbackHandler
-
-langfuse = Langfuse(
-    public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
-    secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
-)
-
-# CallbackHandler로 LangChain 파이프라인 추적
-handler = CallbackHandler()
-
-# 검색 결과 품질 점수 기록
-with langfuse.trace(name="hybrid_search") as trace:
-    results = ensemble.invoke(query, config={"callbacks": [handler]})
-    
-    trace.score(
-        name="recall@10",
-        value=compute_recall(results, relevant_docs),
-        comment=f"query: {query}"
-    )
-```
-
----
-
-## 10. Langfuse 대시보드에서 확인할 수 있는 것
+## 9. 체계적 Recall@K 실험 설계
 
 ```mermaid
 flowchart TD
-    Trace("🔎 Trace: hybrid_search (전체 흐름)"):::trace
+    EXP["실험 설계"]:::header --> V1["변수 1: Retriever"]
+    EXP --> V2["변수 2: K 값"]
+    EXP --> V3["변수 3: 분석 축"]
 
-    Trace --> S1("⏱️ Span: BM25 검색"):::span
-    S1 -.- S1D["- 소요시간<br/>- 반환 문서 수"]:::detail
+    V1 --> R1["BM25"]:::bm25
+    V1 --> R2["Vector"]:::vec
+    V1 --> R3["Hybrid (RRF)"]:::hybrid
 
-    Trace --> S2("⏱️ Span: 벡터 변환 및 검색"):::span
-    S2 -.- S2D["- 소요시간<br/>- 사용된 토큰(비용)"]:::detail
+    V2 --> K1["K = 1, 3, 5, 10, 20"]
 
-    Trace --> S3("⚙️ Span: RRF Fusion 로직"):::span
-    S3 -.- S3D["- 병합 연산 소요시간"]:::detail
+    V3 --> A1["도메인별 (금융 vs 법률 vs AI)"]
+    V3 --> A2["쿼리유형별 (keyword / semantic / mixed)"]
+    V3 --> A3["Latency 측정"]
 
-    Trace --> META("📋 Metadata (실행 컨텍스트)"):::meta
-    META -.- METAD["- Query: 질의문자열<br/>- Weights: [0.5, 0.5]<br/>- Top K: 10"]:::detail
+    R1 & R2 & R3 --> GRID["3 × 5 = 15 조합"]:::result
+    GRID --> DF["pandas DataFrame\n(180 rows)"]:::result
 
-    Trace --> SCORE("🎯 Score (평가 지표)"):::score
-    SCORE -.- SCORED["- metric: recall@10<br/>- value: 0.83"]:::detail
-
-    classDef trace fill:#1a237e,color:#fff,stroke:#fff,stroke-width:2px,font-weight:bold
-    classDef span fill:#0277bd,color:#fff,stroke:#fff,stroke-width:2px
-    classDef meta fill:#4527a0,color:#fff,stroke:#fff,stroke-width:2px
-    classDef score fill:#2e7d32,color:#fff,stroke:#fff,stroke-width:2px
-    classDef detail fill:#f8f9fa,color:#333,stroke:#adb5bd,stroke-width:2px,stroke-dasharray: 3 3
+    classDef header fill:#1a237e,color:#fff,stroke:#fff
+    classDef bm25 fill:#EA4335,color:#fff,stroke:#fff
+    classDef vec fill:#FBBC05,color:#000,stroke:#fff
+    classDef hybrid fill:#34A853,color:#fff,stroke:#fff
+    classDef result fill:#e8eaf6,color:#333,stroke:#5c6bc0
 ```
 
 ---
 
-## 11. 실전 적용 시 주의사항
+## 9. 실험 결과: Recall@K 곡선
 
-### 인덱싱 비용
+```
+Recall@K Curve (Overall)
 
-| 항목 | BM25만 | 벡터만 | Hybrid |
-|------|--------|--------|--------|
-| 인덱싱 시간 (1만 문서) | ~10초 | ~5분 | ~5분 10초 |
-| 스토리지 | 낮음 | 높음 (벡터 차원 × 4bytes) | 높음 |
-| 인덱스 업데이트 비용 | 낮음 | 중간 (배치 가능) | 중간 |
+1.0 ┬─────────────────────────────
+    │                      ●─────● Hybrid
+0.8 ┤               ●─────●
+    │        ●─────●
+0.6 ┤ ●─────●              ▲─────▲ Vector
+    │        ▲─────▲─────▲
+0.4 ┤ ▲─────                ■─────■ BM25
+    │ ■─────■─────■─────■
+0.2 ┤
+    │
+0.0 ┴─────┬─────┬─────┬─────┬────
+    K=1   K=3   K=5   K=10  K=20
+```
 
-### 검색 지연 (Latency)
+<div class="success">
 
-<div class="highlight">
-
-- BM25: 5~20ms
-- 벡터 검색 (HNSW): 20~80ms
-- Hybrid: 30~100ms (병렬 실행 시 벡터 검색에 수렴)
-- **권장:** 두 검색을 **비동기 병렬** 실행 후 RRF 합산
+**핵심 결과:** Hybrid (RRF)는 모든 K값에서 단일 검색 대비 우수.
+특히 K가 작을수록 (K=1~3) 격차가 더 큼 → 프로덕션에서 중요
 
 </div>
 
 ---
 
-## 11. 실전 적용 체크리스트
+## 9. 도메인별 · 쿼리유형별 분석
 
-### 가중치 설정 가이드
+### 도메인별 Recall@10
 
-| 도메인 특성 | BM25 가중치 | 벡터 가중치 |
-|------------|:-----------:|:-----------:|
-| 법률/의료 (정확성 중요) | 0.7 | 0.3 |
-| 일반 Q&A | 0.5 | 0.5 |
-| 감성/창의적 검색 | 0.3 | 0.7 |
-| 코드 검색 | 0.6 | 0.4 |
+| Retriever | 금융 (한국어) | 법률 (한국어) | AI (영어) | 전체 |
+|-----------|:----------:|:----------:|:--------:|:----:|
+| BM25 | 높음 | 높음 | 중간 | 중간 |
+| Vector | 중간 | 중간 | 높음 | 중간 |
+| **Hybrid** | **높음** | **높음** | **높음** | **높음** |
+
+### 쿼리유형별 Recall@10
+
+| Retriever | keyword | semantic | mixed |
+|-----------|:-------:|:--------:|:-----:|
+| BM25 | 강 | 약 | 중 |
+| Vector | 약 | 강 | 중 |
+| **Hybrid** | **강** | **강** | **강** |
 
 <div class="highlight">
 
-**실전 팁:** 가중치는 고정하지 말고, Langfuse로 Recall@10을 지속 모니터링하며 A/B 테스트로 튜닝하라
+**인사이트:** Hybrid는 도메인과 쿼리 유형에 관계없이 가장 안정적 (분산이 작음)
 
 </div>
 
 ---
 
-## Exercise 1: BM25 vs 벡터 검색 단독 실험
+## 10. RRF 가중치 Grid Search 최적화
 
-### 목표
+```mermaid
+stateDiagram-v2
+    [*] --> DefineGrid : 탐색 범위 설정
+    DefineGrid --> RunExperiment : bm25_weight × rrf_k 조합
+    RunExperiment --> MeasureRecall : 각 조합별 Recall@10
+    MeasureRecall --> RankResults : 성능 기준 정렬
+    RankResults --> Analyze : Top-5 조합 분석
 
-BM25와 벡터 검색을 각각 단독으로 구현하고 성능 차이를 확인한다.
+    state Analyze {
+        [*] --> DomainCheck
+        DomainCheck --> WeightEffect : 도메인별 최적 가중치
+        WeightEffect --> KEffect : RRF k 파라미터 영향
+        KEffect --> [*]
+    }
 
-### 과제
-
-1. 노트북의 샘플 문서 20개와 테스트 질의 10개를 사용한다
-2. `BM25Retriever`로 각 질의의 상위 10개 문서를 검색한다
-3. `ChromaDB + HuggingFaceEmbeddings`로 동일 실험을 수행한다
-4. 각 질의에 대해 정답 문서가 상위 10위 이내에 있는지 확인한다
-5. Recall@10을 직접 계산하고 두 방식을 비교하는 표를 출력한다
-
-### 제출 결과물
-
-```
-| 질의 유형 | BM25 Recall@10 | Vector Recall@10 |
-|---------|:-------------:|:---------------:|
-| 키워드형  |     0.xx      |      0.xx       |
-| 의미형   |     0.xx      |      0.xx       |
-| 전체    |     0.xx      |      0.xx       |
+    Analyze --> BuildOptimal : 최적 파라미터로 최종 Retriever
+    BuildOptimal --> [*]
 ```
 
 ---
 
-## Exercise 2: RRF 하이브리드 구현 + Recall@10 측정
+## 10. Grid Search 결과
+
+### 탐색 공간: 7 (가중치) × 4 (rrf_k) = 28개 조합
+
+```python
+bm25_weights = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+rrf_k_values = [10, 30, 60, 100]
+```
+
+### BM25 가중치 vs Recall@10
+
+```
+Recall@10
+ 0.90 ┤           ●───●───●
+      │       ●───            ───●
+ 0.85 ┤   ●───                       ───●
+      │
+ 0.80 ┤ ●
+      ┼───┬───┬───┬───┬───┬───┬───┬──
+     0.2 0.3 0.4 0.5 0.6 0.7 0.8
+                BM25 가중치
+```
+
+<div class="success">
+
+**최적 가중치:** BM25 = 0.5~0.6 부근에서 Recall@10 최대
+법률 도메인: BM25 비중 ↑, AI 도메인: Vector 비중 ↑
+
+</div>
+
+---
+
+## 11. 청크 크기(Chunk Size) 영향 분석
+
+### 실험: 동일 PDF, 다른 청크 크기
+
+| 청크 크기 | 총 청크 수 | BM25 | Vector | Hybrid |
+|:---------:|:---------:|:-----:|:------:|:------:|
+| 300 | 많음 | 중간 | 중간 | 중간 |
+| **500** | **중간** | **높음** | **높음** | **높음** |
+| 800 | 적음 | 중간 | 높음 | 높음 |
+
+```mermaid
+flowchart LR
+    subgraph Small ["Chunk = 300"]
+        S1["짧은 컨텍스트"]:::warn
+        S2["높은 정밀도"]:::ok
+        S3["낮은 재현율"]:::warn
+    end
+    subgraph Medium ["Chunk = 500 (최적)"]
+        M1["적절한 컨텍스트"]:::ok
+        M2["균형잡힌 정밀/재현"]:::ok
+    end
+    subgraph Large ["Chunk = 800"]
+        L1["긴 컨텍스트"]:::ok
+        L2["노이즈 증가"]:::warn
+        L3["높은 재현율"]:::ok
+    end
+
+    classDef ok fill:#e6f4ea,stroke:#34a853,color:#000
+    classDef warn fill:#fce8e6,stroke:#ea4335,color:#000
+```
+
+---
+
+## 12. 실패 분석 (Error Analysis)
+
+### 왜 이 쿼리에서 검색이 실패했는가?
+
+Recall이 낮은 쿼리를 분석하여 파이프라인 개선 단서를 찾는다.
+
+```mermaid
+flowchart TD
+    FAIL["Recall < 1.0인 쿼리"]:::fail --> A1{"실패 원인?"}
+    A1 -->|"키워드 불일치"| B1["동의어/축약어 문제\n'해고' vs '부당해고'"]:::cause
+    A1 -->|"의미적 거리"| B2["다른 도메인 문서가\n더 가깝게 위치"]:::cause
+    A1 -->|"청크 분할"| B3["관련 정보가 2개 청크에\n걸쳐 분리됨"]:::cause
+
+    B1 --> S1["개선: Query Expansion\n(LLM으로 동의어 생성)"]:::fix
+    B2 --> S2["개선: Domain-specific\n임베딩 모델 사용"]:::fix
+    B3 --> S3["개선: 오버랩 증가\n또는 문장 기반 분할"]:::fix
+
+    classDef fail fill:#ea4335,color:#fff,stroke:#fff
+    classDef cause fill:#fce8e6,color:#333,stroke:#ea4335
+    classDef fix fill:#e6f4ea,color:#333,stroke:#34a853
+```
+
+<div class="highlight">
+
+**실패 분석은 선택이 아닌 필수.** 평균 Recall만 보면 어떤 쿼리에서 문제가 있는지 알 수 없다.
+
+</div>
+
+---
+
+## 13. Langfuse 통합 — 실험 추적
+
+```python
+from langfuse import Langfuse
+
+langfuse = Langfuse()
+trace = langfuse.trace(name="ep01-hybrid-search-experiment")
+
+# Grid Search 결과 기록
+for _, row in df_grid.head(5).iterrows():
+    trace.score(
+        name="recall_10",
+        value=row["recall_10"],
+        comment=f"BM25={row['bm25_weight']}, k={row['rrf_k']}",
+    )
+
+# 최적 파라미터 기록
+trace.score(
+    name="best_recall_10",
+    value=best["recall_10"],
+    comment=f"BEST: BM25={best['bm25_weight']}, RRF k={best['rrf_k']}",
+)
+langfuse.flush()
+```
+
+```mermaid
+flowchart LR
+    EXP["Grid Search\n28개 조합"]:::exp --> LF["Langfuse\nTrace + Score"]:::lf
+    LF --> DASH["대시보드\n가중치별 Recall 추이"]:::dash
+    DASH --> AB["A/B 테스트\n최적 파라미터 배포"]:::ab
+
+    classDef exp fill:#4285F4,color:#fff,stroke:#fff
+    classDef lf fill:#9C27B0,color:#fff,stroke:#fff
+    classDef dash fill:#FF9800,color:#fff,stroke:#fff
+    classDef ab fill:#34A853,color:#fff,stroke:#fff
+```
+
+---
+
+## 14. 전체 파이프라인 정리
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Dev as 개발자
+    participant PDF as PDF 문서
+    participant Split as Chunker
+    participant IDX as BM25 + Vector 인덱스
+    participant RRF as Hybrid RRF
+    participant GS as Grid Search
+    participant LF as Langfuse
+    participant PROD as 프로덕션
+
+    Dev->>PDF: 1. PDF 텍스트 추출 (PyMuPDF)
+    Dev->>Split: 2. 청킹 (500자, 오버랩 100)
+    Split->>IDX: 3. BM25 + ChromaDB 인덱싱
+    Dev->>RRF: 4. Hybrid RRF Retriever 구축
+    Dev->>GS: 5. Grid Search (가중치 × rrf_k)
+    GS->>LF: 6. 실험 결과 기록
+    LF-->>Dev: 7. 최적 파라미터 확인
+    Dev->>PROD: 8. 최적 Retriever 배포
+    PROD->>LF: 9. 프로덕션 Recall 모니터링
+```
+
+---
+
+## Exercise 1: 새 PDF로 파이프라인 확장
 
 ### 목표
 
-EnsembleRetriever로 RRF 기반 하이브리드 검색을 구현하고 성능 향상을 검증한다.
+자신만의 PDF를 추가하고 Recall@K 변화를 분석한다.
 
 ### 과제
 
-1. Exercise 1의 BM25/벡터 Retriever를 재사용한다
-2. `EnsembleRetriever`로 가중치 `[0.5, 0.5]`인 하이브리드를 구성한다
-3. 동일 테스트셋으로 Recall@10을 측정한다
-4. 가중치를 `[0.7, 0.3]`, `[0.3, 0.7]`로 바꾸며 최적값을 탐색한다
-5. Langfuse에 각 실험의 Recall@10 점수를 Score로 기록한다
-6. matplotlib으로 세 방식(BM25, Vector, Hybrid)의 Recall@10 막대그래프를 그린다
+1. PDF 1개를 `data/` 폴더에 추가
+2. 해당 문서 도메인에 맞는 쿼리 3개 + ground truth 정의
+3. 전체 파이프라인 재실행 후 도메인별 Recall@10 비교
+4. **분석 포인트:** 새 문서가 기존 문서의 검색 성능에 영향을 주는가?
 
-### 보너스 (선택)
+---
 
-> Elasticsearch가 설치되어 있다면 `rank.rrf` 내장 기능을 사용해 동일 실험을 수행하고 EnsembleRetriever와 결과를 비교하라.
+## Exercise 2: 청크 전략 최적화 챌린지
+
+### 목표
+
+청크 크기 · 오버랩 · 구분자 조합으로 **Recall@10 최고 기록 갱신**
+
+### 과제
+
+1. `RecursiveCharacterTextSplitter` 파라미터 3개(size, overlap, separators) 변경
+2. 최소 5개 조합을 실험
+3. 결과를 DataFrame으로 정리하고 최적 조합 도출
+4. **핵심 질문:** 오버랩 비율(overlap/chunk_size)이 높을수록 항상 좋은가?
+
+---
+
+## Exercise 3: Query Expansion으로 Recall 개선
+
+### 목표
+
+LLM으로 쿼리를 확장하여 BM25 키워드 매칭률을 높인다.
+
+### 과제
+
+1. Claude에게 원본 쿼리의 동의어/관련어를 생성하도록 프롬프트 작성
+2. 확장 쿼리로 BM25 Recall@10 측정
+3. 원본 vs 확장 쿼리 비교
+4. **핵심 질문:** Query Expansion이 벡터 검색에도 효과가 있는가?

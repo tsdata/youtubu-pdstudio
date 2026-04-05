@@ -1,0 +1,146 @@
+[
+  {
+    "query": "삼성전기 목표주가 200,000원 투자의견 BUY",
+    "domain": "finance",
+    "type": "keyword",
+    "relevant_ids": [
+      "samsung_electro_chunk_000",
+      "samsung_electro_chunk_003"
+    ]
+  },
+  {
+    "query": "삼성전기 EPS 8,999원 PER 17.4배 2024F",
+    "domain": "finance",
+    "type": "keyword",
+    "relevant_ids": [
+      "samsung_electro_chunk_003"
+    ]
+  },
+  {
+    "query": "이 회사 주식을 지금 사도 되는지, 앞으로 실적이 좋아질 근거",
+    "domain": "finance",
+    "type": "semantic",
+    "relevant_ids": [
+      "samsung_electro_chunk_000",
+      "samsung_electro_chunk_001",
+      "samsung_electro_chunk_002",
+      "samsung_electro_chunk_003",
+      "samsung_electro_chunk_004",
+      "samsung_electro_chunk_005",
+      "samsung_electro_chunk_006",
+      "samsung_electro_chunk_008",
+      "samsung_electro_chunk_009",
+      "samsung_electro_chunk_010",
+      "samsung_electro_chunk_012",
+      "samsung_electro_chunk_013"
+    ]
+  },
+  {
+    "query": "전자부품 각 사업 부문의 실적이 어떻게 변하고 있는지",
+    "domain": "finance",
+    "type": "semantic",
+    "relevant_ids": [
+      "samsung_electro_chunk_000",
+      "samsung_electro_chunk_001"
+    ]
+  },
+  {
+    "query": "제26조 해고의 예고 30일 전 통상임금 30일분",
+    "domain": "law",
+    "type": "keyword",
+    "relevant_ids": [
+      "labor_law_chunk_015"
+    ]
+  },
+  {
+    "query": "제37조 지연이자 연 100분의 40 미지급 임금",
+    "domain": "law",
+    "type": "keyword",
+    "relevant_ids": [
+      "labor_law_chunk_024"
+    ]
+  },
+  {
+    "query": "직장에서 부당하게 쫓겨났을 때 도움받을 수 있는 곳과 절차",
+    "domain": "law",
+    "type": "semantic",
+    "relevant_ids": [
+      "labor_law_chunk_012",
+      "labor_law_chunk_015",
+      "labor_law_chunk_016",
+      "labor_law_chunk_017",
+      "labor_law_chunk_018",
+      "labor_law_chunk_019",
+      "labor_law_chunk_020",
+      "labor_law_chunk_022",
+      "labor_law_chunk_072",
+      "labor_law_chunk_073",
+      "labor_law_chunk_090"
+    ]
+  },
+  {
+    "query": "회사가 월급을 제때 안 줄 때 받을 수 있는 벌칙성 이자",
+    "domain": "law",
+    "type": "semantic",
+    "relevant_ids": [
+      "labor_law_chunk_022",
+      "labor_law_chunk_023",
+      "labor_law_chunk_024"
+    ]
+  },
+  {
+    "query": "BLEU score 28.4 EN-DE WMT 2014 translation",
+    "domain": "ai",
+    "type": "keyword",
+    "relevant_ids": []
+  },
+  {
+    "query": "d_model 512 d_ff 2048 h 8 heads Transformer",
+    "domain": "ai",
+    "type": "keyword",
+    "relevant_ids": [
+      "transformer_chunk_036",
+      "transformer_chunk_064"
+    ]
+  },
+  {
+    "query": "순서 정보가 없는 구조에서 단어 위치를 알려주기 위해 추가하는 신호",
+    "domain": "ai",
+    "type": "semantic",
+    "relevant_ids": [
+      "transformer_chunk_039",
+      "transformer_chunk_040",
+      "transformer_chunk_041",
+      "transformer_chunk_042",
+      "transformer_chunk_057",
+      "transformer_chunk_065",
+      "transformer_chunk_068"
+    ]
+  },
+  {
+    "query": "순환 구조의 순차 처리 병목을 제거하고 모든 위치를 동시에 처리하는 방법",
+    "domain": "ai",
+    "type": "semantic",
+    "relevant_ids": [
+      "transformer_chunk_002",
+      "transformer_chunk_004",
+      "transformer_chunk_010",
+      "transformer_chunk_011",
+      "transformer_chunk_012",
+      "transformer_chunk_013",
+      "transformer_chunk_014",
+      "transformer_chunk_016",
+      "transformer_chunk_022",
+      "transformer_chunk_023",
+      "transformer_chunk_024",
+      "transformer_chunk_032",
+      "transformer_chunk_033",
+      "transformer_chunk_038",
+      "transformer_chunk_039",
+      "transformer_chunk_042",
+      "transformer_chunk_046",
+      "transformer_chunk_074",
+      "transformer_chunk_075"
+    ]
+  }
+]
